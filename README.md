@@ -1,4 +1,4 @@
-# Matchmaker
+# Counterpartner
 A short code for creating matched pairs from groups.
 
 Visit the active code via :

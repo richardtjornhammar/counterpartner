@@ -83,8 +83,8 @@ def match_dataframe ( cohort_df , standardize = False ,
     #
     matched_df = None
     for m, im in zip(matched_pairs,range(len(matched_pairs))) :
-        tdf = cohort_df_.iloc[[m[0],m[1]],:]
-        tdf .loc[:,'MP.ID'] = im
+        tdf = cohort_df_.iloc[[m[0],m[1]],:].copy()
+        tdf .loc[:,'MP.ID'] = im 
         if matched_df is None :
             matched_df = tdf
         else :
@@ -97,13 +97,13 @@ def create_matched_selection ( use_information, exc , inc , sdf=None , flagged =
         use_information = [ 'Gender' , 'Type' , 'Age' , 'BMI [kg/m2]' ]
         exc_dict = { 'label':'Gender' , 'pair':['Male','Female'] }
         inc_dict = { 'label':'Type'   , 'pair':['NGT','T2D'] }
-        print ( create_matched_selection ( use_information , exc=gdict , inc=ddict ) )
+        print ( create_matched_selection ( use_information , sdf=df , exc=exc_dict , inc=inc_dict ) )
     """
     if sdf is None :
         print ( 'FAILED' )
         return ( None )
     p_df = match_dataframe ( sdf.loc[[idx for idx in sdf.index if not idx in flagged],use_information ],
-            standardize  = True  , include_only = ddict , exclude = gdict )
+            standardize  = True  , include_only = inc , exclude = exc )
     p_df .loc[:,'name'] = p_df.index.values
     add_cols = [c for c in sdf.columns if c not in p_df]
     for c in add_cols :

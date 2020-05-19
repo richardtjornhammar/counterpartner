@@ -72,7 +72,7 @@ def match_dataframe ( cohort_df , standardize = False ,
         disallowed = { tuple(p):1 for p in min2max_pairs if set([v[0] for v in exc_pair_df.iloc[list(p)].values])==set(exc_pair_types) }
     #
     min2max_pairs = [ p for p in min2max_pairs if tuple(p) in allowed and not tuple(p) in disallowed ]
-    matched = [ p for p in unpack([ min2max_pairs[0] ]) ] # FIRST IS SIMPLE
+    matched = [ p for p in unpack([ min2max_pairs[0] ]) ]
     matched_pairs = [ min2max_pairs[0] ]
     for pair in min2max_pairs :
         smp = set(matched)
@@ -84,7 +84,7 @@ def match_dataframe ( cohort_df , standardize = False ,
     matched_df = None
     for m, im in zip(matched_pairs,range(len(matched_pairs))) :
         tdf = cohort_df_.iloc[[m[0],m[1]],:].copy()
-        tdf .loc[:,'MP.ID'] = im 
+        tdf .loc[:,'MP.ID'] = im
         if matched_df is None :
             matched_df = tdf
         else :
@@ -102,10 +102,10 @@ def create_matched_selection ( use_information, exc , inc , sdf=None , flagged =
     if sdf is None :
         print ( 'FAILED' )
         return ( None )
-    p_df = match_dataframe ( sdf.loc[[idx for idx in sdf.index if not idx in flagged],use_information ],
+    p_df = match_dataframe ( sdf.loc[ [ idx for idx in sdf.index if not idx in flagged],list(set(use_information)&set(sdf.columns))] ,
             standardize  = True  , include_only = inc , exclude = exc )
     p_df .loc[:,'name'] = p_df.index.values
-    add_cols = [c for c in sdf.columns if c not in p_df]
+    add_cols = [ c for c in sdf.columns if c not in p_df ]
     for c in add_cols :
         p_df.loc[:,c] = sdf.loc[p_df.index.values,c].values
     matchlist_pdf = p_df .loc[:,['name','MP.ID']].groupby('MP.ID').apply(lambda x: '.'.join([str(y[0]) for y in x.values])).values

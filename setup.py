@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup (
     name = "counterpartner",
-    version = "0.10.2",
+    version = "0.20.0",
     author = "Richard Tjörnhammar",
     author_email = "richard.tjornhammar@gmail.com",
     description = "Counterpartner",

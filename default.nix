@@ -1,8 +1,8 @@
 { pkgs ? import <nixpkgs> {} }:
   pkgs.mkShell {
-    buildInputs = [ pkgs.python37 
-                    pkgs.python37Packages.pandas 
-                    pkgs.python37Packages.numpy 
-                    pkgs.python37Packages.scikitlearn
-                    pkgs.python37Packages.statsmodels ];
+    buildInputs = [ pkgs.python312 
+                    pkgs.python312Packages.pandas 
+                    pkgs.python312Packages.numpy 
+                    pkgs.python312Packages.scipy
+                    pkgs.python312Packages.matplotlib ];
 }

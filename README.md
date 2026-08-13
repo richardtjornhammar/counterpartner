@@ -142,10 +142,11 @@ The corresponding percentile is located in the reference distribution.
 
 Example:
 
-Female Percentile	Female Salary	Male Percentile Match
-10% 38,000SEK	Male 10th percentile
-50% 47,000SEK	Male median
-90% 63,000SEK	Male 90th percentile
+|Female Percentile | Female Salary | Male Percentile Match|
+|------------------|---------------|----------------------|
+|              10% |     38,000SEK |  Male 10th percentile|
+|              50% |     47,000SEK |  Male median         |
+|              90% |     63,000SEK |  Male 90th percentile|
 
 This produces the transported value T(x_i) which represents the salary expected under distributional parity.
 
@@ -275,10 +276,11 @@ The method assumes that each observation belongs to a category represented by a 
 
 The codings are parsed as:
 
-Component   -	Meaning
-First two characters    -	Type
-Third character -   Complexity
-Remaining characters    -   Expert-defined tail
+|Component | Meaning        |
+|----------|----------------|
+|First two characters | Type|
+|Third character | Complexity|
+|Remaining characters | Expert-defined tail|
 
 The complete category code defines the local comparison group, while only the pair (work type,complexity) is used to identify comparable categories for pooling. Pooling is done in order to collect small groups into larger comparable ones when local evaluation fails due to lack of evidence size in the comparison.
 

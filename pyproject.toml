@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "counterpartner"
+version = "0.20.0"
+authors = [
+    { name="Richard Tjörnhammar", email="richard.tjornhammar@gmail.com" },
+]
+description = "A short code for creating matched pairs from groups. Updated version addresses equalising contrast values between binary groups"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
+
+dependencies = [
+    "numpy>=1.26.4",
+    "pandas>=2.3.1",
+    "scipy>=1.16.3",
+    "matplotlib>=3.10.5"
+]
+
+[project.urls]
+Homepage = "https://github.com/richardtjornhammar/counterpartner/"
+Issues = "https://github.com/richardtjornhammar/counterpartner/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/counterpartner"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src"]

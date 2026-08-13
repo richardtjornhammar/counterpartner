@@ -694,6 +694,1306 @@ class OptimalTransportFairness:
             ascending=False
         )
 
+
+
+
+
+class SymmetricOptimalTransportFairness:
+    """
+    Symmetric fairness adjustment using 1D optimal transport.
+
+    Policy
+    ------
+    1. Compare only within comparable categories.
+    2. Treat the two groups symmetrically.
+    3. Never reduce an individual's value.
+    4. Eliminate the observed quantile disparity.
+    5. Minimize the total required upward adjustment.
+    6. Preserve rank ordering within each group.
+
+    Mathematical formulation
+    -------------------------
+    For two groups with empirical quantile functions
+
+        Q1(p)
+        Q2(p)
+
+    define the common target as the upper quantile envelope:
+
+        Q*(p) = max(Q1(p), Q2(p))
+
+    This is the minimal pointwise target satisfying
+
+        Q*(p) >= Q1(p)
+        Q*(p) >= Q2(p)
+
+    for every percentile p.
+
+    Each individual is then transported to the corresponding
+    percentile of Q*.
+
+    Optional regularization applies only a fraction lambda of
+    the required upward correction:
+
+        x_new = x + lambda * (target - x)
+
+    where 0 < lambda <= 1.
+
+    lambda = 1
+        Full minimal correction in one step.
+
+    lambda < 1
+        Conservative correction applied iteratively.
+    """
+
+    def __init__(
+        self,
+        value_col="Lön",
+        group_col="Kön",
+        category_col="Besta",
+        instance1_label=None,
+        instance2_label=None,
+        min_group_size=3,
+        regularization=1.0,
+        quantile_grid_size=201,
+    ):
+        if instance1_label is None or instance2_label is None:
+            raise ValueError(
+                "Please specify instance1_label and instance2_label."
+            )
+
+        if not 0 < regularization <= 1:
+            raise ValueError(
+                "regularization must satisfy 0 < regularization <= 1."
+            )
+
+        if quantile_grid_size < 2:
+            raise ValueError(
+                "quantile_grid_size must be >= 2."
+            )
+
+        self.value_col = value_col
+        self.group_col = group_col
+        self.category_col = category_col
+
+        self.instance1_label = instance1_label
+        self.instance2_label = instance2_label
+
+        self.min_group_size = min_group_size
+        self.regularization = regularization
+        self.quantile_grid_size = quantile_grid_size
+
+    # ============================================================
+    # Quantile grid
+    # ============================================================
+
+    def _quantile_grid(self):
+        """
+        Common percentile grid used for both groups.
+        """
+
+        return np.linspace(
+            0.0,
+            1.0,
+            self.quantile_grid_size
+        )
+
+    # ============================================================
+    # Empirical quantile function
+    # ============================================================
+
+    def _quantile_function(
+        self,
+        values,
+        q_grid
+    ):
+        """
+        Empirical quantile function.
+
+        Q(p) = empirical p-quantile.
+        """
+
+        values = np.asarray(
+            values,
+            dtype=float
+        )
+
+        values = values[
+            np.isfinite(values)
+        ]
+
+        if len(values) == 0:
+            raise ValueError(
+                "Cannot construct quantile function "
+                "from an empty value array."
+            )
+
+        return np.quantile(
+            values,
+            q_grid
+        )
+
+    # ============================================================
+    # Upper Wasserstein envelope
+    # ============================================================
+
+    def _upper_envelope(
+        self,
+        values1,
+        values2,
+        q_grid
+    ):
+        """
+        Construct the symmetric minimal positive target.
+
+        Q*(p) = max(Q1(p), Q2(p))
+
+        This is the smallest quantile function that is
+        simultaneously greater than or equal to both
+        input quantile functions.
+        """
+
+        q1 = self._quantile_function(
+            values1,
+            q_grid
+        )
+
+        q2 = self._quantile_function(
+            values2,
+            q_grid
+        )
+
+        target = np.maximum(
+            q1,
+            q2
+        )
+
+        return q1, q2, target
+
+    # ============================================================
+    # Individual percentile positions
+    # ============================================================
+
+    def _empirical_percentiles(
+        self,
+        values
+    ):
+        """
+        Calculate the percentile position of every observation.
+
+        q_i = (rank_i - 0.5) / n
+
+        This corresponds to the fractional-rank convention
+        used in the original implementation.
+        """
+
+        values = np.asarray(
+            values,
+            dtype=float
+        )
+
+        n = len(values)
+
+        if n == 0:
+            return np.array([])
+
+        ranks = rankdata(
+            values,
+            method="average"
+        )
+
+        return (
+            ranks - 0.5
+        ) / n
+
+    # ============================================================
+    # Transport to arbitrary quantile function
+    # ============================================================
+
+    def _transport_to_target(
+        self,
+        source,
+        target_quantiles,
+        q_grid
+    ):
+        """
+        Transport source observations to a target quantile
+        function.
+
+        Each observation retains its percentile rank.
+
+        Therefore the transport is monotonic and does not
+        reorder individuals within a group.
+        """
+
+        source = np.asarray(
+            source,
+            dtype=float
+        )
+
+        q = self._empirical_percentiles(
+            source
+        )
+
+        transported = np.interp(
+            q,
+            q_grid,
+            target_quantiles,
+            left=target_quantiles[0],
+            right=target_quantiles[-1]
+        )
+
+        return transported
+
+    # ============================================================
+    # Positive projection
+    # ============================================================
+
+    def _positive_projection(
+        self,
+        original,
+        target
+    ):
+        """
+        Enforce the policy constraint:
+
+            adjusted_value >= original_value
+
+        No salary reductions are permitted.
+        """
+
+        return np.maximum(
+            original,
+            target
+        )
+
+    # ============================================================
+    # Regularized update
+    # ============================================================
+
+    def _regularized_update(
+        self,
+        current,
+        target
+    ):
+        """
+        Apply a fraction of the required correction.
+
+        lambda = 1
+            Full correction.
+
+        lambda < 1
+            Conservative correction.
+        """
+
+        return (
+            current
+            +
+            self.regularization
+            *
+            (
+                target
+                -
+                current
+            )
+        )
+
+    # ============================================================
+    # Calculate correction for one category
+    # ============================================================
+
+    def _solve_category(
+        self,
+        instance1,
+        instance2,
+        category
+    ):
+        """
+        Solve the symmetric OT problem for one category.
+        """
+
+        values1 = instance1[
+            self.value_col
+        ].to_numpy(
+            dtype=float
+        )
+
+        values2 = instance2[
+            self.value_col
+        ].to_numpy(
+            dtype=float
+        )
+
+        # --------------------------------------------------------
+        # Remove invalid observations
+        # --------------------------------------------------------
+
+        valid1 = np.isfinite(values1)
+        valid2 = np.isfinite(values2)
+
+        values1 = values1[valid1]
+        values2 = values2[valid2]
+
+        if (
+            len(values1) < self.min_group_size
+            or
+            len(values2) < self.min_group_size
+        ):
+            return None
+
+        # --------------------------------------------------------
+        # Quantile grid
+        # --------------------------------------------------------
+
+        q_grid = self._quantile_grid()
+
+        # --------------------------------------------------------
+        # Quantile distributions
+        # --------------------------------------------------------
+
+        q1, q2, target = (
+            self._upper_envelope(
+                values1,
+                values2,
+                q_grid
+            )
+        )
+
+        # --------------------------------------------------------
+        # Transport both groups to common target
+        # --------------------------------------------------------
+
+        transported1 = (
+            self._transport_to_target(
+                values1,
+                target,
+                q_grid
+            )
+        )
+
+        transported2 = (
+            self._transport_to_target(
+                values2,
+                target,
+                q_grid
+            )
+        )
+
+        # --------------------------------------------------------
+        # Positive-only projection
+        # --------------------------------------------------------
+
+        projected1 = (
+            self._positive_projection(
+                values1,
+                transported1
+            )
+        )
+
+        projected2 = (
+            self._positive_projection(
+                values2,
+                transported2
+            )
+        )
+
+        # --------------------------------------------------------
+        # Regularized update
+        # --------------------------------------------------------
+
+        fair1 = (
+            self._regularized_update(
+                values1,
+                projected1
+            )
+        )
+
+        fair2 = (
+            self._regularized_update(
+                values2,
+                projected2
+            )
+        )
+
+        # --------------------------------------------------------
+        # Build output
+        # --------------------------------------------------------
+
+        result1 = instance1.loc[
+            valid1
+        ].copy()
+
+        result2 = instance2.loc[
+            valid2
+        ].copy()
+
+        # --------------------------------------------------------
+        # Group 1
+        # --------------------------------------------------------
+
+        result1[
+            "transport_value"
+        ] = transported1
+
+        result1[
+            "fair_value"
+        ] = fair1
+
+        result1[
+            "adjustment"
+        ] = (
+            fair1
+            -
+            values1
+        )
+
+        result1[
+            "relative_gap"
+        ] = np.divide(
+            result1["adjustment"].to_numpy(),
+            values1,
+            out=np.zeros_like(values1),
+            where=values1 != 0
+        )
+
+        result1[
+            "fairness_group"
+        ] = self.instance1_label
+
+        # --------------------------------------------------------
+        # Group 2
+        # --------------------------------------------------------
+
+        result2[
+            "transport_value"
+        ] = transported2
+
+        result2[
+            "fair_value"
+        ] = fair2
+
+        result2[
+            "adjustment"
+        ] = (
+            fair2
+            -
+            values2
+        )
+
+        result2[
+            "relative_gap"
+        ] = np.divide(
+            result2["adjustment"].to_numpy(),
+            values2,
+            out=np.zeros_like(values2),
+            where=values2 != 0
+        )
+
+        result2[
+            "fairness_group"
+        ] = self.instance2_label
+
+        # --------------------------------------------------------
+        # Metadata
+        # --------------------------------------------------------
+
+        result1[
+            "Category_group"
+        ] = category
+
+        result2[
+            "Category_group"
+        ] = category
+
+        # --------------------------------------------------------
+        # Store category-level information
+        # --------------------------------------------------------
+
+        category_info = {
+            "category": category,
+            "q_grid": q_grid,
+            "q1": q1,
+            "q2": q2,
+            "target": target,
+            "wasserstein_gap": np.trapezoid(
+                np.abs(q1 - q2),
+                q_grid
+            ),
+            "total_adjustment_group1": np.sum(
+                result1["adjustment"]
+            ),
+            "total_adjustment_group2": np.sum(
+                result2["adjustment"]
+            ),
+        }
+
+        return (
+            result1,
+            result2,
+            category_info
+        )
+
+    # ============================================================
+    # Full transformation
+    # ============================================================
+
+    def fit_transform(
+        self,
+        df
+    ):
+        """
+        Calculate fairness-adjusted values for all eligible
+        categories.
+
+        Returns
+        -------
+        result : pandas.DataFrame
+            Individual-level adjustment results.
+
+        category_info : list
+            Quantile-level information for each category.
+        """
+
+        outputs = []
+        category_information = []
+
+        categories = (
+            df[self.category_col]
+            .astype(str)
+            .unique()
+        )
+
+        for category in categories:
+
+            sub = df[
+                df[self.category_col]
+                .astype(str)
+                ==
+                str(category)
+            ].copy()
+
+            instance1 = sub[
+                sub[self.group_col]
+                ==
+                self.instance1_label
+            ].copy()
+
+            instance2 = sub[
+                sub[self.group_col]
+                ==
+                self.instance2_label
+            ].copy()
+
+            if (
+                len(instance1)
+                < self.min_group_size
+                or
+                len(instance2)
+                < self.min_group_size
+            ):
+                continue
+
+            solved = self._solve_category(
+                instance1,
+                instance2,
+                category
+            )
+
+            if solved is None:
+                continue
+
+            result1, result2, info = solved
+
+            outputs.append(result1)
+            outputs.append(result2)
+
+            category_information.append(
+                info
+            )
+
+        if len(outputs) == 0:
+
+            return (
+                pd.DataFrame(),
+                category_information
+            )
+
+        result = pd.concat(
+            outputs,
+            axis=0
+        )
+
+        result = result.sort_values(
+            "adjustment",
+            ascending=False
+        )
+
+        return (
+            result,
+            category_information
+        )
+
+    # ============================================================
+    # Iterative correction
+    # ============================================================
+
+    def iterate(
+        self,
+        df,
+        tolerance=1e-6,
+        max_iterations=100
+    ):
+        """
+        Iteratively apply the minimal positive correction.
+
+        Useful when regularization < 1.
+
+        Returns
+        -------
+        result : pandas.DataFrame
+            Final individual-level values and adjustments.
+
+        history : list
+            Convergence information.
+        """
+
+        current = df.copy()
+
+        original_values = (
+            df[self.value_col]
+            .to_numpy(
+                dtype=float
+            )
+        )
+
+        history = []
+
+        for iteration in range(
+            max_iterations
+        ):
+
+            result, category_info = (
+                self.fit_transform(
+                    current
+                )
+            )
+
+            if result.empty:
+                return (
+                    result,
+                    history
+                )
+
+            # ----------------------------------------------------
+            # Map calculated fair values back to current dataframe
+            # ----------------------------------------------------
+
+            updated = current.copy()
+
+            updated.loc[
+                result.index,
+                self.value_col
+            ] = result[
+                "fair_value"
+            ]
+
+            # ----------------------------------------------------
+            # Measure maximum change
+            # ----------------------------------------------------
+
+            old_values = (
+                current.loc[
+                    result.index,
+                    self.value_col
+                ].to_numpy(
+                    dtype=float
+                )
+            )
+
+            new_values = (
+                result[
+                    "fair_value"
+                ].to_numpy(
+                    dtype=float
+                )
+            )
+
+            max_change = np.max(
+                np.abs(
+                    new_values
+                    -
+                    old_values
+                )
+            )
+
+            total_increase = np.sum(
+                new_values
+                -
+                old_values
+            )
+
+            history.append(
+                {
+                    "iteration": iteration + 1,
+                    "max_change": max_change,
+                    "total_increment": total_increase,
+                }
+            )
+
+            current = updated
+
+            if max_change <= tolerance:
+                break
+
+        # --------------------------------------------------------
+        # Final report
+        # --------------------------------------------------------
+
+        final = current.copy()
+
+        final[
+            "original_value"
+        ] = original_values
+
+        final[
+            "fair_value"
+        ] = final[
+            self.value_col
+        ]
+
+        final[
+            "adjustment"
+        ] = (
+            final["fair_value"]
+            -
+            final["original_value"]
+        )
+
+        final[
+            "relative_gap"
+        ] = np.divide(
+            final["adjustment"].to_numpy(),
+            final["original_value"].to_numpy(),
+            out=np.zeros_like(original_values),
+            where=final["original_value"].to_numpy() != 0
+        )
+
+        final = final.sort_values(
+            "adjustment",
+            ascending=False
+        )
+
+        return (
+            final,
+            history
+        )
+
+
+class CatParser:
+    """
+    Category structure
+
+    XXC.......
+
+    XX = work type
+    C  = complexity
+
+    remainder = expert tail
+    """
+
+    @staticmethod
+    def work_type(code):
+        code = str(code)
+        return code[:2]
+
+    @staticmethod
+    def complexity(code):
+        code = str(code)
+
+        if len(code) < 3:
+            return None
+
+        return code[2]
+
+    @staticmethod
+    def comparison_key(code):
+
+        return (
+            CatParser.work_type(code),
+            CatParser.complexity(code)
+        )
+
+
+class PooledSymmetricOptimalTransportFairness:
+
+    def __init__(
+        self,
+        value_col="Lön",
+        group_col="Kön",
+        category_col="Besta",
+        group1_label="Kvinna",
+        group2_label="Man",
+        tau=10,
+        quantile_grid_size=101,
+        min_pool_evidence=3,
+    ):
+
+        self.value_col = value_col
+        self.group_col = group_col
+        self.category_col = category_col
+
+        self.group1_label = group1_label
+        self.group2_label = group2_label
+
+        self.tau = tau
+
+        self.quantile_grid_size = (
+            quantile_grid_size
+        )
+
+        self.min_pool_evidence = (
+            min_pool_evidence
+        )
+
+    # --------------------------------------------------
+    # Evidence
+    # --------------------------------------------------
+
+    def _evidence(
+        self,
+        n1,
+        n2
+    ):
+        return min(n1, n2)
+
+    # --------------------------------------------------
+    # Quantile function
+    # --------------------------------------------------
+
+    def _quantile_function(
+        self,
+        values,
+        q_grid
+    ):
+
+        values = np.asarray(values)
+
+        if len(values) == 0:
+            return None
+
+        return np.quantile(
+            values,
+            q_grid,
+            method="linear"
+        )
+
+    # --------------------------------------------------
+    # Transport
+    # --------------------------------------------------
+
+    def _transport_to_target(
+        self,
+        source_values,
+        target_quantiles,
+        q_grid
+    ):
+
+        source_values = np.asarray(
+            source_values
+        )
+
+        rank = rankdata(
+            source_values,
+            method="average"
+        )
+
+        q = (
+            rank - 0.5
+        ) / len(source_values)
+
+        transported = np.interp(
+            q,
+            q_grid,
+            target_quantiles
+        )
+
+        return transported
+
+    # --------------------------------------------------
+    # Candidate pool
+    # --------------------------------------------------
+
+    def _pool_candidates(
+        self,
+        category,
+        all_categories
+    ):
+
+        key = CatParser.comparison_key(
+            category
+        )
+
+        output = []
+
+        for c in all_categories:
+
+            if c == category:
+                continue
+
+            if (
+                CatParser.comparison_key(c)
+                ==
+                key
+            ):
+                output.append(c)
+
+        return output
+
+    # --------------------------------------------------
+    # Local fairness target
+    # --------------------------------------------------
+
+    def _local_target(
+        self,
+        sub,
+        q_grid
+    ):
+
+        g1 = sub[
+            sub[self.group_col]
+            ==
+            self.group1_label
+        ][self.value_col].values
+
+        g2 = sub[
+            sub[self.group_col]
+            ==
+            self.group2_label
+        ][self.value_col].values
+
+        if (
+            len(g1) == 0
+            or
+            len(g2) == 0
+        ):
+            return None
+
+        q1 = self._quantile_function(
+            g1,
+            q_grid
+        )
+
+        q2 = self._quantile_function(
+            g2,
+            q_grid
+        )
+
+        return np.maximum(
+            q1,
+            q2
+        )
+
+    # --------------------------------------------------
+    # Pooled target
+    # --------------------------------------------------
+
+    def _pooled_target(
+        self,
+        category,
+        category_data,
+        q_grid
+    ):
+
+        pool = self._pool_candidates(
+            category,
+            category_data.keys()
+        )
+
+        targets = []
+        weights = []
+
+        for c in pool:
+
+            sub = category_data[c]
+
+            n1 = (
+                sub[self.group_col]
+                ==
+                self.group1_label
+            ).sum()
+
+            n2 = (
+                sub[self.group_col]
+                ==
+                self.group2_label
+            ).sum()
+
+            evidence = self._evidence(
+                n1,
+                n2
+            )
+
+            if (
+                evidence
+                <
+                self.min_pool_evidence
+            ):
+                continue
+
+            target = (
+                self._local_target(
+                    sub,
+                    q_grid
+                )
+            )
+
+            if target is None:
+                continue
+
+            targets.append(
+                target
+            )
+
+            weights.append(
+                evidence
+            )
+
+        if len(weights) == 0:
+            return None
+
+        weights = np.asarray(
+            weights,
+            dtype=float
+        )
+
+        weights /= (
+            weights.sum()
+        )
+
+        pooled = np.zeros(
+            len(q_grid)
+        )
+
+        for w, target in zip(
+            weights,
+            targets
+        ):
+            pooled += w * target
+
+        return pooled
+
+    # --------------------------------------------------
+    # Shrinkage
+    # --------------------------------------------------
+
+    def _effective_target(
+        self,
+        local_target,
+        pooled_target,
+        contrast_n
+    ):
+
+        if pooled_target is None:
+            return local_target
+
+        lam = (
+            contrast_n
+            /
+            (
+                contrast_n
+                +
+                self.tau
+            )
+        )
+
+        return (
+            lam
+            *
+            local_target
+            +
+            (
+                1
+                -
+                lam
+            )
+            *
+            pooled_target
+        )
+
+    # --------------------------------------------------
+    # Main
+    # --------------------------------------------------
+
+    def fit_transform(
+        self,
+        df
+    ):
+
+        df = df.copy()
+
+        q_grid = np.linspace(
+            0,
+            1,
+            self.quantile_grid_size
+        )
+
+        categories = {
+            k: v.copy()
+            for k, v in
+            df.groupby(
+                self.category_col
+            )
+        }
+
+        outputs = []
+
+        for (
+            category,
+            sub
+        ) in categories.items():
+
+            g1 = sub[
+                sub[self.group_col]
+                ==
+                self.group1_label
+            ].copy()
+
+            g2 = sub[
+                sub[self.group_col]
+                ==
+                self.group2_label
+            ].copy()
+
+            n1 = len(g1)
+            n2 = len(g2)
+
+            if (
+                n1 == 0
+                or
+                n2 == 0
+            ):
+                continue
+
+            contrast_n = (
+                2
+                *
+                min(
+                    n1,
+                    n2
+                )
+            )
+
+            local_target = (
+                self._local_target(
+                    sub,
+                    q_grid
+                )
+            )
+
+            pooled_target = (
+                self._pooled_target(
+                    category,
+                    categories,
+                    q_grid
+                )
+            )
+
+            target = (
+                self._effective_target(
+                    local_target,
+                    pooled_target,
+                    contrast_n
+                )
+            )
+
+            # ------------------------
+            # Women
+            # ------------------------
+
+            transported = (
+                self._transport_to_target(
+                    g1[self.value_col].values,
+                    target,
+                    q_grid
+                )
+            )
+
+            transported = np.maximum(
+                transported,
+                g1[self.value_col].values
+            )
+
+            g1["fair_value"] = (
+                transported
+            )
+
+            g1["adjustment"] = (
+                transported
+                -
+                g1[self.value_col].values
+            )
+
+            g1["fairness_status"] = (
+                "pooled"
+                if pooled_target is not None
+                else "local"
+            )
+
+            outputs.append(g1)
+
+            # ------------------------
+            # Men
+            # ------------------------
+
+            transported = (
+                self._transport_to_target(
+                    g2[self.value_col].values,
+                    target,
+                    q_grid
+                )
+            )
+
+            transported = np.maximum(
+                transported,
+                g2[self.value_col].values
+            )
+
+            g2["fair_value"] = (
+                transported
+            )
+
+            g2["adjustment"] = (
+                transported
+                -
+                g2[self.value_col].values
+            )
+
+            g2["fairness_status"] = (
+                "pooled"
+                if pooled_target is not None
+                else "local"
+            )
+
+            outputs.append(g2)
+
+        if len(outputs) == 0:
+
+            return pd.DataFrame()
+
+        result = pd.concat(
+            outputs,
+            ignore_index=True
+        )
+
+        result["relative_gap"] = (
+            result["adjustment"]
+            /
+            result[self.value_col]
+        )
+
+        return result
+
+
 if __name__ == '__main__':
     # Example 1: Group A larger
     group_a = np.array([10, 25, 40, 55, 70]) # n=5
@@ -778,4 +2078,50 @@ if __name__ == '__main__':
     )
     report_df2 = adjuster.fit_transform(udf)
     print(report_df2)
-    print("Sista approximation : hantera som ett optimalt transport problem, minimera höjningar")
+    print("Approximation : hantera som ett optimalt asymmetriskt transport problem, minimera höjningar")
+
+    if True:
+
+        fairness = (
+            PooledSymmetricOptimalTransportFairness(
+                value_col="Lön",
+                group_col="Kön",
+                category_col="Besta",
+                group1_label="Kvinna",
+                group2_label="Man",
+                tau=10,
+                min_pool_evidence=3,
+                )
+            )
+
+        rdf = fairness.fit_transform(udf)
+        print ( "Approximation : hantera som ett symmetriskt optimalt transport problem med poolning av små grupper, minimera höjningar")
+        rdf.sort_values(by='Index').to_excel('symmetriska_lönekorrektioner_med_pooling_av_jämförbara_grupper.xlsx')
+
+    else :
+
+        """Enkel Symmetrisk korrektion"""
+        ot1 = SymmetricOptimalTransportFairness(
+            value_col       = "Lön",
+            group_col       = "Kön",
+            category_col    = "Besta",
+            instance1_label = "Kvinna",
+            instance2_label = "Man",
+            regularization  = 1.0
+        )
+        report_df4 = ot1.fit_transform(udf)
+        rdf = report_df4[0]
+        print ( rdf )
+        print ( "Approximation : hantera som ett symmetriskt optimalt transport problem, minimera höjningar")
+        print ( rdf.describe() )
+        rdf.sort_values(by='Index').to_excel('symmetriska_lönekorrektioner.xlsx')
+
+    from counterpartner.visualise import plot_besta_corrections,plot_quality_histogram
+
+    figs = plot_quality_histogram( rdf ,
+                                  category_col  = "BESTA"                   ,
+                                  x_label       = "Lönekorrektion [SEK]"    ,
+                                  y_label       = "Antal individer"         )
+
+    import matplotlib.pyplot as plt
+    plt.show()

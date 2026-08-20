@@ -1233,6 +1233,19 @@ class SymmetricOptimalTransportFairness:
             category_info
         )
 
+    def _identity_result(
+        self,
+        sub,
+        status="insufficient_evidence"
+    ):
+        sub = sub.copy()
+        sub["fair_value"]      = sub[self.value_col]
+        sub["adjustment"]      = 0.0
+        sub["relative_gap"]    = 0.0
+        sub["fairness_status"] = status
+
+        return sub
+
     # ============================================================
     # Full transformation
     # ============================================================
@@ -1291,6 +1304,12 @@ class SymmetricOptimalTransportFairness:
                 len(instance2)
                 < self.min_group_size
             ):
+                outputs.append(
+                    self._identity_result(
+                        sub,
+                        "insufficient_evidence"
+                    )
+                )
                 continue
 
             solved = self._solve_category(
@@ -1300,6 +1319,12 @@ class SymmetricOptimalTransportFairness:
             )
 
             if solved is None:
+                outputs.append(
+                    self._identity_result(
+                        sub,
+                        "insufficient_evidence"
+                    )
+                )
                 continue
 
             result1, result2, info = solved
@@ -1820,6 +1845,20 @@ class PooledSymmetricOptimalTransportFairness:
             pooled_target
         )
 
+
+    def _identity_result(
+        self,
+        sub,
+        status="insufficient_evidence"
+    ):
+        sub = sub.copy()
+        sub["fair_value"] = sub[self.value_col]
+        sub["adjustment"] = 0.0
+        sub["relative_gap"] = 0.0
+        sub["fairness_status"] = status
+
+        return sub
+
     # --------------------------------------------------
     # Main
     # --------------------------------------------------
@@ -1867,34 +1906,18 @@ class PooledSymmetricOptimalTransportFairness:
             n1 = len(g1)
             n2 = len(g2)
 
-            #if (
-            #    n1 == 0
-            #    or
-            #    n2 == 0
-            #):
-            #    continue
             if (
                 n1 == 0
                 or
                 n2 == 0
             ):
-
-                sub["fair_value"] = (
-                    sub[self.value_col]
+                outputs.append(
+                    self._identity_result(
+                        sub,
+                        "insufficient_evidence"
+                    )
                 )
-
-                sub["adjustment"] = 0.0
-
-                sub["relative_gap"] = 0.0
-
-                sub["fairness_status"] = (
-                    "insufficient_contrast"
-                )
-
-                outputs.append(sub)
-
                 continue
-
 
             contrast_n = (
                 2

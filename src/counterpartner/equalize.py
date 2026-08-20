@@ -1867,12 +1867,34 @@ class PooledSymmetricOptimalTransportFairness:
             n1 = len(g1)
             n2 = len(g2)
 
+            #if (
+            #    n1 == 0
+            #    or
+            #    n2 == 0
+            #):
+            #    continue
             if (
                 n1 == 0
                 or
                 n2 == 0
             ):
+
+                sub["fair_value"] = (
+                    sub[self.value_col]
+                )
+
+                sub["adjustment"] = 0.0
+
+                sub["relative_gap"] = 0.0
+
+                sub["fairness_status"] = (
+                    "insufficient_contrast"
+                )
+
+                outputs.append(sub)
+
                 continue
+
 
             contrast_n = (
                 2
